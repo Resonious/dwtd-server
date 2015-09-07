@@ -77,6 +77,7 @@ int main(int argc, char** argv) {
 
                 color_resp.Write((RakNet::MessageID)ID_ASSIGNED_COLOR);
                 color_resp.Write(color);
+                color_resp.Write(packet->systemAddress.systemIndex);
 
                 peer->Send(&color_resp, HIGH_PRIORITY, RELIABLE_ORDERED, 0, packet->systemAddress, false);
 
