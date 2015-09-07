@@ -20,7 +20,17 @@ struct PlayerStatus {
     RakNet::SystemIndex playing_with_index;
     RakNet::SystemAddress addr;
     uint32_t color;
+
+    bool was_killed;
+    bool thinks_other_was_killed;
 };
+
+void reset_kills(PlayerStatus* p1, PlayerStatus* p2) {
+    p1->was_killed = false;
+    p1->thinks_other_was_killed = false;
+    p2->was_killed = false;
+    p2->thinks_other_was_killed = false;
+}
 
 int main(int argc, char** argv) {
     PlayerStatus players[100];
@@ -63,6 +73,8 @@ int main(int argc, char** argv) {
                 printf("A connection is incoming. Index: %i\n", packet->systemAddress.systemIndex);
                 players[packet->systemAddress.systemIndex].state = EXISTENCE_ACKNOWLEDGED;
                 players[packet->systemAddress.systemIndex].addr = packet->systemAddress;
+                players[packet->systemAddress.systemIndex].was_killed = false;
+                players[packet->systemAddress.systemIndex].thinks_other_was_killed = false;
                 if (packet->systemAddress.systemIndex > highest_index)
                     highest_index = packet->systemAddress.systemIndex;
                 break;
@@ -166,6 +178,103 @@ int main(int argc, char** argv) {
                 peer->Send(&resp, HIGH_PRIORITY, RELIABLE_ORDERED, 0, player2->addr, false);
 
                 printf("Ready to roll!\n");
+            } break;
+
+            case ID_SEND_INPUT: {
+                PlayerStatus* player1 = &players[packet->systemAddress.systemIndex];
+                PlayerStatus* player2 = &players[player1->playing_with_index];
+
+                RakNet::BitStream req(packet->data, packet->length, false);
+                req.IgnoreBytes(sizeof(RakNet::MessageID));
+
+                bool p1_was_killed = req.ReadBit();
+                bool p2_was_killed = req.ReadBit();
+
+                bool p1_suicide = req.ReadBit();
+                bool p2_suicide = req.ReadBit();
+
+                if (p1_suicide) {
+                    printf("Player 1 suicided from their own perspective.\n");
+                    RakNet::BitStream resp2p1;
+                    resp2p1.Write((RakNet::MessageID)ID_KILL_HAPPENED);
+                    resp2p1.Write1();
+
+                    RakNet::BitStream resp2p2;
+                    resp2p2.Write((RakNet::MessageID)ID_KILL_HAPPENED);
+                    resp2p2.Write0();
+
+                    peer->Send(&resp2p1, HIGH_PRIORITY, RELIABLE_ORDERED, 0, player1->addr, false);
+                    peer->Send(&resp2p2, HIGH_PRIORITY, RELIABLE_ORDERED, 0, player2->addr, false);
+                    reset_kills(player1, player2);
+                    break;
+                }
+                if (p2_suicide) {
+                    printf("Player 2 suicided from player 1's perspective.\n");
+                    RakNet::BitStream resp2p1;
+                    resp2p1.Write((RakNet::MessageID)ID_KILL_HAPPENED);
+                    resp2p1.Write0(); // false: 'enemy' was killed, from p1's perspective
+
+                    RakNet::BitStream resp2p2;
+                    resp2p2.Write((RakNet::MessageID)ID_KILL_HAPPENED);
+                    resp2p2.Write1(); // true: 'player' was killed, from p2's perspective
+
+                    peer->Send(&resp2p1, HIGH_PRIORITY, RELIABLE_ORDERED, 0, player1->addr, false);
+                    peer->Send(&resp2p2, HIGH_PRIORITY, RELIABLE_ORDERED, 0, player2->addr, false);
+                    reset_kills(player1, player2);
+                    break;
+                }
+
+                player1->was_killed              = player1->was_killed              || p1_was_killed;
+                player1->thinks_other_was_killed = player1->thinks_other_was_killed || p2_was_killed;
+
+                RakNet::uint24_t p1_action = 0;
+                RakNet::uint24_t p1_cell_x = 0;
+                RakNet::uint24_t p1_cell_y = 0;
+                bool update_pos = req.ReadBit();
+
+                if (update_pos) {
+                    req.Read(p1_action);
+                    req.Read(p1_cell_x);
+                    req.Read(p1_cell_y);
+                }
+
+                if (player1->was_killed && player2->thinks_other_was_killed) {
+                    // Player 1 was killed
+                    RakNet::BitStream resp2p1;
+                    resp2p1.Write((RakNet::MessageID)ID_KILL_HAPPENED);
+                    resp2p1.Write1(); // true: 'player' was killed, from p1's perspective
+
+                    RakNet::BitStream resp2p2;
+                    resp2p2.Write((RakNet::MessageID)ID_KILL_HAPPENED);
+                    resp2p2.Write0(); // false: 'enemy' was killed, from p2's perspective
+
+                    peer->Send(&resp2p1, HIGH_PRIORITY, RELIABLE_ORDERED, 0, player1->addr, false);
+                    peer->Send(&resp2p2, HIGH_PRIORITY, RELIABLE_ORDERED, 0, player2->addr, false);
+                    reset_kills(player1, player2);
+                }
+                else if (player2->was_killed && player1->thinks_other_was_killed) {
+                    // Player 2 was killed
+                    RakNet::BitStream resp2p1;
+                    resp2p1.Write((RakNet::MessageID)ID_KILL_HAPPENED);
+                    resp2p1.Write0(); // false: 'enemy' was killed, from p1's perspective
+
+                    RakNet::BitStream resp2p2;
+                    resp2p2.Write((RakNet::MessageID)ID_KILL_HAPPENED);
+                    resp2p2.Write1(); // true: 'player' was killed, from p2's perspective
+
+                    peer->Send(&resp2p1, HIGH_PRIORITY, RELIABLE_ORDERED, 0, player1->addr, false);
+                    peer->Send(&resp2p2, HIGH_PRIORITY, RELIABLE_ORDERED, 0, player2->addr, false);
+                    reset_kills(player1, player2);
+                }
+                else if (update_pos) {
+                    // JUST MOVEMENT
+                    RakNet::BitStream resp;
+                    resp.Write((RakNet::MessageID)ID_RECEIVE_INPUT);
+                    resp.Write(p1_action);
+                    resp.Write(p1_cell_x);
+                    resp.Write(p1_cell_y);
+                    peer->Send(&resp, HIGH_PRIORITY, RELIABLE_ORDERED, 0, player2->addr, false);
+                }
             } break;
 
             default:
