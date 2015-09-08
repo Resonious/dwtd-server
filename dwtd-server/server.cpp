@@ -6,7 +6,7 @@
 #include <stdio.h>
 #include <string.h>
 
-#define PORT 3999
+#define PORT 8081
 #define MAX_CLIENTS 25
 
 enum PlayerState {
@@ -62,18 +62,18 @@ int main(int argc, char** argv) {
     // So that we don't loop through the entire list.
     int highest_index = 0;
 
-	RakNet::RakPeerInterface* peer = RakNet::RakPeerInterface::GetInstance();
-	peer->SetTimeoutTime(30000,RakNet::UNASSIGNED_SYSTEM_ADDRESS);
+    RakNet::RakPeerInterface* peer = RakNet::RakPeerInterface::GetInstance();
+    peer->SetTimeoutTime(30000,RakNet::UNASSIGNED_SYSTEM_ADDRESS);
 
     RakNet::Packet* packet;
 
     {
-        RakNet::SocketDescriptor descriptor(PORT, NULL);
+        RakNet::SocketDescriptor descriptor(PORT, "45.63.16.189");
         peer->Startup(MAX_CLIENTS, &descriptor, 1);
     }
     peer->SetMaximumIncomingConnections(MAX_CLIENTS);
 
-    printf("up we go!\n");
+    printf("up we go! on port %i\n", PORT);
 
     while (true) {
         for (packet = peer->Receive(); packet; peer->DeallocatePacket(packet), packet = peer->Receive()) {
@@ -89,7 +89,7 @@ int main(int argc, char** argv) {
                 break;
             case ID_CONNECTION_REQUEST_ACCEPTED:
                 printf("Our connection request has been accepted.\n");
-                break;					
+                break;                    
             case ID_NEW_INCOMING_CONNECTION:
                 printf("A connection is incoming. Index: %i\n", packet->systemAddress.systemIndex);
                 players[packet->systemAddress.systemIndex].state = EXISTENCE_ACKNOWLEDGED;
